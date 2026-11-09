@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Models and data (large; downloaded or converted locally)
+models/
+*.safetensors
+*.bin
+*.onnx
+*.mlmodel
+*.mlpackage/
+*.mlmodelc/
+logs/
+*.wav
+
+# Xcode / macOS
+.DS_Store
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+ios/**/Models/
+
+# Editors
+.vscode/
+.idea/

@@ -1,0 +1,9 @@
+# torch is installed separately by setup.ps1 / setup.sh (Windows needs the CUDA wheel index).
+# Tested together: torch 2.14.1+cu130, transformers 5.22.1, silero-vad 6.2.3, pywebview 6.2.1, Python 3.13.
+transformers>=5.0,<6
+sentencepiece
+safetensors
+silero-vad>=6
+sounddevice
+numpy
+pywebview>=6
