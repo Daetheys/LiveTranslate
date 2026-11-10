@@ -10,7 +10,7 @@ mic 16 kHz mono, 512-sample chunks (32 ms)
   │
   ▼
 Segmenter (Silero VAD) ── every 1 s while speaking ──► "partial" job (preview, greedy, no speaker)
-  │  utterance ends after 0.6 s of silence (or 20 s max)
+  │  utterance ends after 0.6 s of silence (or 12 s max)
   ▼
 "final" job ──► worker thread (one at a time; stale partials are skipped)
   1. Whisper: one decoder step → language probs over the mode's candidates + no-speech prob
@@ -19,7 +19,8 @@ Segmenter (Silero VAD) ── every 1 s while speaking ──► "partial" job (
   4. Whisper transcribe (beam 5 for finals, greedy for partials) + average token log-prob
   5. textfix: collapse repeats → drop if hallucination / compression ratio > 2.4 /
      (no-speech > 0.6 and log-prob < -1.0)
-  6. NLLB translate, sentence by sentence (beam 4, no_repeat_ngram 4) → clean_translation
+  6. translate sentence by sentence (beam 4, no_repeat_ngram 4) → clean_translation:
+     Opus-MT for fr↔hu; NLLB (loaded on first use) for any other pair
   7. Diarizer.commit → speaker id (only kept utterances create/update speakers)
   8. emit "final" + append to session log (wav + utterances.jsonl)
 ```
@@ -34,7 +35,7 @@ Text rules are in `desktop/textfix.py` (pure Python, unit tested).
 |---|---|---|
 | VAD speech threshold | 0.5 (silence when < 0.35) | `Segmenter` |
 | End of utterance | 0.6 s silence | `Segmenter.min_silence` |
-| Min / max utterance | 0.3 s / 20 s | `Segmenter` |
+| Min / max utterance | 0.3 s / 12 s | `Segmenter` |
 | Partial preview interval | 1 s | `Segmenter.partial_every` |
 | Pre-roll kept before speech | 0.3 s | `Segmenter.pre_roll` |
 | Whisper beams | 5 final, 1 partial | `Transcriber.transcribe` |
@@ -42,8 +43,8 @@ Text rules are in `desktop/textfix.py` (pure Python, unit tested).
 | Drop as noise | no-speech > 0.6 and avg log-prob < −1.0 | `NO_SPEECH_DROP`, `LOGPROB_SILENCE` |
 | Show "⚠ unsure" | avg log-prob < −0.8, or language taken from speaker | `LOGPROB_UNCERTAIN` |
 | Repetition | gzip compression ratio > 2.4 | `textfix.COMPRESSION_MAX` |
-| NLLB beams | 4 final, 1 partial; `no_repeat_ngram_size=4` | `NllbTranslator` |
-| Speaker match | cosine ≥ 0.80 to a speaker centroid (UI slider 0.70–0.95) | `Diarizer.threshold` |
+| Translation beams | 4 final, 1 partial; `no_repeat_ngram_size=4` | `MarianTranslator`, `NllbTranslator` |
+| Speaker match | cosine ≥ 0.70 (CAM++) / 0.80 (WavLM) to a speaker centroid (UI slider 0.50–0.95) | `SPEAKER_THRESHOLDS` |
 | New speaker needs | ≥ 2 s of audio (shorter → nearest known speaker) | `Diarizer.min_new` |
 
 ## Modes
@@ -56,11 +57,17 @@ Text rules are in `desktop/textfix.py` (pure Python, unit tested).
 
 ## Diarization (online)
 
-Each final utterance → WavLM x-vector (`microsoft/wavlm-base-plus-sv`, 512-d, L2-normalised).
+Each final utterance → speaker embedding, L2-normalised. Default: CAM++ (3D-Speaker,
+`3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx`, 192-d, 28 MB, via sherpa-onnx on CPU).
+Alternative: WavLM x-vector (`microsoft/wavlm-base-plus-sv`, 512-d, 0.4 GB).
 Each speaker keeps the **sum** of their embeddings; the centroid is its normalised value.
 Match = best cosine to a centroid ≥ threshold; otherwise a new speaker (only if the utterance
 is ≥ 2 s). Merge = add sums. Each speaker also keeps a count of their languages, used by step 3.
-Calibration on three synthetic voices: same voice 0.94–0.98, different voices 0.57–0.86.
+Calibration, CAM++ on 10 real FLEURS speakers (each recording split in halves + a 2 s piece):
+same speaker ≥ 0.69 (mean 0.82 for ≥ 3 s pieces), different speakers mean 0.19, 99th percentile 0.74
+(two higher pairs, 0.83–0.88, are probably the same FLEURS reader). 0.70 favours splitting one person
+in two (fixable with Merge) over merging two people (not fixable).
+WavLM on three synthetic voices: same voice 0.94–0.98, different voices 0.57–0.86.
 
 ## UI ↔ engine protocol
 

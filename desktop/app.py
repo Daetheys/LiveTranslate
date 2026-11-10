@@ -28,7 +28,7 @@ class Api:
     def config(self):
         e = self._engine
         return {"mode": e.mode, "langs": {k: v[0] for k, v in LANGS.items()},
-                "threshold": e.args.speaker_threshold, "diarization": not e.args.no_diarization,
+                "threshold": e.speaker_threshold, "diarization": not e.args.no_diarization,
                 "ready": e.ready.is_set()}
 
     def set_mode(self, mode):
@@ -63,13 +63,19 @@ def main():
                     help="auto = French <-> Hungarian; hu / fr = any language into Hungarian / French")
     ap.add_argument("--asr-model", default="openai/whisper-large-v3-turbo",
                     help="try openai/whisper-large-v3 if Hungarian recognition is weak")
-    ap.add_argument("--mt", choices=["nllb", "ollama"], default="nllb")
+    ap.add_argument("--mt", choices=["opus", "nllb", "ollama"], default="opus",
+                    help="opus = Opus-MT for FR<->HU, NLLB loaded only when another language "
+                         "appears; nllb = NLLB for everything; ollama = local LLM")
+    ap.add_argument("--opus-fr-hu", default="Helsinki-NLP/opus-mt-fr-hu")
+    ap.add_argument("--opus-hu-fr", default="Helsinki-NLP/opus-mt-hu-fr")
     ap.add_argument("--nllb-model", default="facebook/nllb-200-distilled-1.3B",
                     help="HF id or local folder (see convert_nllb.py for a lighter fp16 copy)")
     ap.add_argument("--ollama-model", default="gemma3:4b")
-    ap.add_argument("--speaker-model", default="microsoft/wavlm-base-plus-sv")
-    ap.add_argument("--speaker-threshold", type=float, default=0.80,
-                    help="cosine similarity needed to match a known voice (higher = more speakers)")
+    ap.add_argument("--speaker-model", default="campplus",
+                    help="campplus (28 MB ONNX, default) or microsoft/wavlm-base-plus-sv")
+    ap.add_argument("--speaker-threshold", type=float, default=None,
+                    help="cosine similarity needed to match a known voice (higher = more speakers); "
+                         "default 0.70 for campplus, 0.80 for wavlm")
     ap.add_argument("--no-diarization", action="store_true")
     ap.add_argument("--log-dir", default=None,
                     help="save every utterance (wav + utterances.jsonl) in a session folder here")

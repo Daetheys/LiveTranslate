@@ -53,7 +53,7 @@ class Segmenter:
     """Cuts a 16 kHz stream into utterances with silero-vad; emits partial and final audio."""
 
     def __init__(self, on_partial, on_final, threshold=0.5, min_silence=0.6,
-                 min_speech=0.3, max_speech=20.0, partial_every=1.0, pre_roll=0.3):
+                 min_speech=0.3, max_speech=12.0, partial_every=1.0, pre_roll=0.3):
         from silero_vad import load_silero_vad
         self.vad = load_silero_vad()
         self.on_partial, self.on_final = on_partial, on_final
@@ -154,6 +154,58 @@ class NllbTranslator:
         return " ".join(clean_translation(t) for t in self.tok.batch_decode(out, skip_special_tokens=True))
 
 
+class MarianTranslator:
+    """Opus-MT (Helsinki-NLP) models, one small model per language direction (~75M params each)."""
+
+    def __init__(self, pairs, device, dtype):
+        from transformers import MarianMTModel, MarianTokenizer
+        self.device = device
+        self.models = {}
+        for (src, tgt), model_id in pairs.items():
+            tok = MarianTokenizer.from_pretrained(model_id)
+            model = MarianMTModel.from_pretrained(model_id, dtype=dtype).to(device).eval()
+            self.models[(src, tgt)] = (tok, model)
+
+    def supports(self, src, tgt):
+        return (src, tgt) in self.models
+
+    @torch.inference_mode()
+    def __call__(self, text, src, tgt, final=True):
+        tok, model = self.models[(src, tgt)]
+        enc = tok(split_sentences(text), return_tensors="pt", padding=True).to(self.device)
+        out = model.generate(**enc, num_beams=4 if final else 1, no_repeat_ngram_size=4,
+                             max_new_tokens=2 * enc["input_ids"].shape[1] + 10)
+        return " ".join(clean_translation(t) for t in tok.batch_decode(out, skip_special_tokens=True))
+
+
+class RoutedTranslator:
+    """Opus-MT for the pairs it covers (FR <-> HU), NLLB for everything else. NLLB (2.7-5.5 GB)
+    is only loaded the first time an uncovered pair is needed ("any language ->" modes)."""
+
+    UNAVAILABLE = "(no translation: not enough memory to load the model for this language)"
+
+    def __init__(self, primary, load_fallback, emit):
+        self.primary, self.load_fallback, self.emit = primary, load_fallback, emit
+        self.fallback = None  # None = not loaded yet, False = loading failed (don't retry)
+
+    def __call__(self, text, src, tgt, final=True):
+        if self.primary.supports(src, tgt):
+            return self.primary(text, src, tgt, final)
+        if self.fallback is None:
+            self.emit("status", "Loading NLLB for other languages…")
+            try:
+                self.fallback = self.load_fallback()
+            except (MemoryError, RuntimeError, OSError) as e:
+                # Retrying on every utterance would hammer a machine that is already out of
+                # memory: give up once, keep FR <-> HU working.
+                self.fallback = False
+                self.emit("error", f"Other languages disabled, NLLB could not load: {type(e).__name__}")
+            self.emit("status", "Listening…")
+        if self.fallback is False:
+            return self.UNAVAILABLE
+        return self.fallback(text, src, tgt, final)
+
+
 class OllamaTranslator:
     """Translation through a local LLM served by Ollama (e.g. gemma3:4b / gemma3:12b)."""
 
@@ -170,6 +222,44 @@ class OllamaTranslator:
             return json.loads(r.read())["response"].strip()
 
 
+CAMPPLUS = ("csukuangfj/speaker-embedding-models",
+            "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx")
+# Default match threshold per speaker model, calibrated on real FLEURS speech (see docs/ARCHITECTURE.md).
+SPEAKER_THRESHOLDS = {"campplus": 0.70, "microsoft/wavlm-base-plus-sv": 0.80}
+
+
+class CamppEmbedder:
+    """3D-Speaker CAM++ (28 MB ONNX, 192-d) through sherpa-onnx, on CPU. Same model is usable on iOS."""
+
+    def __init__(self, path=None):
+        import sherpa_onnx
+        from huggingface_hub import hf_hub_download
+        path = path or hf_hub_download(*CAMPPLUS)
+        self.ex = sherpa_onnx.SpeakerEmbeddingExtractor(
+            sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=path, num_threads=2))
+
+    def __call__(self, audio):
+        s = self.ex.create_stream()
+        s.accept_waveform(sample_rate=SAMPLE_RATE, waveform=audio)
+        s.input_finished()
+        return np.asarray(self.ex.compute(s), np.float32)
+
+
+class WavlmEmbedder:
+    """microsoft/wavlm-base-plus-sv x-vectors (0.4 GB, 512-d). Previous default, kept for comparison."""
+
+    def __init__(self, model_id, device):
+        from transformers import AutoFeatureExtractor, WavLMForXVector
+        self.device = device
+        self.fe = AutoFeatureExtractor.from_pretrained(model_id)
+        self.model = WavLMForXVector.from_pretrained(model_id).to(device).eval()
+
+    @torch.inference_mode()
+    def __call__(self, audio):
+        inp = self.fe(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt").to(self.device)
+        return self.model(**inp).embeddings[0].float().cpu().numpy()
+
+
 class Diarizer:
     """Online speaker clustering: one voice embedding per utterance, matched by cosine
     similarity against each known speaker's running centroid.
@@ -177,11 +267,8 @@ class Diarizer:
     identify() only looks; commit() changes state, so utterances that Whisper later
     rejects as noise never create or skew a speaker."""
 
-    def __init__(self, model_id, device, threshold=0.80, min_new_speaker=2.0):
-        from transformers import AutoFeatureExtractor, WavLMForXVector
-        self.device, self.threshold, self.min_new = device, threshold, min_new_speaker
-        self.fe = AutoFeatureExtractor.from_pretrained(model_id)
-        self.model = WavLMForXVector.from_pretrained(model_id).to(device).eval()
+    def __init__(self, embed, threshold, min_new_speaker=2.0):
+        self.embed, self.threshold, self.min_new = embed, threshold, min_new_speaker
         self.lock = threading.Lock()
         self.reset()
 
@@ -189,10 +276,9 @@ class Diarizer:
         with self.lock:
             self.sums, self.langs, self.next_id = {}, {}, 1  # id -> embedding sum / Counter
 
-    @torch.inference_mode()
     def _embed(self, audio):
-        inp = self.fe(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt").to(self.device)
-        return torch.nn.functional.normalize(self.model(**inp).embeddings[0].float(), dim=-1)
+        e = self.embed(audio)
+        return e / (np.linalg.norm(e) + 1e-9)
 
     def identify(self, audio):
         """Returns (speaker id or None for a new voice, similarity, all similarities, embedding, reliable)."""
@@ -203,9 +289,7 @@ class Diarizer:
         with self.lock:
             sims = {}
             if self.sums:
-                ids = list(self.sums)
-                centroids = torch.nn.functional.normalize(torch.stack([self.sums[i] for i in ids]), dim=-1)
-                sims = dict(zip(ids, (centroids @ e).tolist()))
+                sims = {i: float(s @ e / (np.linalg.norm(s) + 1e-9)) for i, s in self.sums.items()}
                 best = max(sims, key=sims.get)
                 if sims[best] >= self.threshold or not reliable:
                     return best, sims[best], sims, e, reliable
@@ -215,7 +299,7 @@ class Diarizer:
         with self.lock:
             if sid is None or sid not in self.sums:  # new voice (or merged away meanwhile)
                 sid, self.next_id = self.next_id, self.next_id + 1
-                self.sums[sid] = e.clone()
+                self.sums[sid] = e.copy()
             elif reliable:
                 self.sums[sid] += e
             self.langs.setdefault(sid, Counter())[lang] += 1
@@ -267,6 +351,8 @@ class Engine:
         self.stream = None
         self.diarizer = None
         self.log = None
+        self.speaker_threshold = (args.speaker_threshold if args.speaker_threshold is not None
+                                  else SPEAKER_THRESHOLDS.get(args.speaker_model, 0.75))
 
     def load(self):
         a = self.args
@@ -281,12 +367,18 @@ class Engine:
         self.asr = Transcriber(a.asr_model, device, dtype)
         if a.mt == "ollama":
             self.mt = OllamaTranslator(a.ollama_model)
-        else:
+        elif a.mt == "nllb":
             self.emit("status", f"Loading NLLB ({a.nllb_model})…")
             self.mt = NllbTranslator(a.nllb_model, device, dtype)
+        else:
+            self.emit("status", "Loading Opus-MT (fr ⇄ hu)…")
+            opus = MarianTranslator({("fr", "hu"): a.opus_fr_hu, ("hu", "fr"): a.opus_hu_fr}, device, dtype)
+            self.mt = RoutedTranslator(opus, lambda: NllbTranslator(a.nllb_model, device, dtype), self.emit)
         if not a.no_diarization:
             self.emit("status", f"Loading speaker model ({a.speaker_model})…")
-            self.diarizer = Diarizer(a.speaker_model, device, a.speaker_threshold)
+            embed = (CamppEmbedder() if a.speaker_model == "campplus"
+                     else WavlmEmbedder(a.speaker_model, device))
+            self.diarizer = Diarizer(embed, self.speaker_threshold)
         if a.log_dir:
             self.log = SessionLog(a.log_dir)
         # The first GPU pass compiles kernels (~4 s): do it now, not on the first sentence.

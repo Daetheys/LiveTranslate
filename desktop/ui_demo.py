@@ -30,7 +30,7 @@ class FakeApi:
         self._on = False
 
     def config(self):
-        return {"mode": "auto", "langs": {}, "threshold": 0.8, "diarization": True, "ready": True}
+        return {"mode": "auto", "langs": {}, "threshold": 0.7, "diarization": True, "ready": True}
 
     def toggle(self):
         self._on = not self._on

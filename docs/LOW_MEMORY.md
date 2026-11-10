@@ -35,15 +35,16 @@ NLLB-1.3B +1.5 GB, Opus-MT both directions 0.23 GB.
    compressed turbo builds (`openai_whisper-large-v3-v20240930_turbo_632MB` in
    `argmaxinc/whisperkit-coreml`). Its speed and accuracy on Hungarian are **not measured yet**.
 
-## Suggested phone configuration
+## Suggested phone configuration (now the desktop default too)
 
 | Part | Model | Approx. RAM |
 |---|---|---|
 | Speech | Whisper large-v3-turbo, compressed Core ML (WhisperKit, ~632 MB) | ~1 GB (to verify) |
 | Translation | Opus-MT fr→hu + hu→fr, int8 | 0.23 GB |
-| Speakers | small speaker-embedding model (e.g. CAM++ ~30 MB via sherpa-onnx) instead of WavLM (0.4 GB) | < 0.1 GB (to verify; re-calibrate the threshold) |
+| Speakers | small speaker-embedding model (e.g. CAM++ ~30 MB via sherpa-onnx) instead of WavLM (0.4 GB) | < 0.1 GB; threshold 0.70 (calibrated, see ARCHITECTURE.md) |
 | VAD | Silero | negligible |
 | **Total** | | **≈ 1.3–1.5 GB** |
 
-Further savings: load NLLB only when an "any language" mode is selected; use greedy decoding for
-partial previews; cap utterances at ~12 s instead of 20 s; prefer runtimes that memory-map weights.
+Also implemented in the desktop app: NLLB loads only when a language other than FR/HU appears;
+greedy decoding for partial previews; utterances capped at 12 s. Still to do on the phone: prefer
+runtimes that memory-map weights.

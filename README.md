@@ -5,7 +5,8 @@ each person gets their own colour, the translation is shown large and the origin
 
 <img src="docs/screenshot.png" alt="LiveTranslate desktop app" width="360">
 
-- Speech recognition: Whisper large-v3-turbo · Translation: NLLB-200 · Speakers: WavLM voice prints
+- Speech recognition: Whisper large-v3-turbo · Translation: Opus-MT (FR ⇄ HU), NLLB-200 for other
+  languages · Speakers: CAM++ voice prints. The same light models are planned for the phone.
 - Everything runs on your own machine. No internet needed once the models are downloaded.
 - Modes: FR ⇄ HU (auto-detected), any language → Magyar, any language → Français.
 - People panel: rename speakers, merge two speakers who are the same person, adjust voice matching.
@@ -18,7 +19,7 @@ planned: see [docs/IOS_PORT.md](docs/IOS_PORT.md).
 ```powershell
 cd desktop
 .\setup.ps1            # once: creates the Python environment (on D:\ by default, see the script)
-.\run.cmd              # starts the app; the first start downloads ~9 GB of models
+.\run.cmd              # starts the app; the first start downloads ~2 GB of models
 ```
 
 Press the microphone button (or Space) and talk. If the wrong microphone is used:
@@ -34,4 +35,5 @@ cd desktop && ./setup.sh && ./run.sh
 
 - How it works and all tuning parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Notes for developers and coding agents: [CLAUDE.md](CLAUDE.md)
-- NLLB-200 weights are licensed CC-BY-NC 4.0 (non-commercial use only).
+- NLLB-200 weights (only used for languages other than French/Hungarian) are licensed CC-BY-NC 4.0
+  (non-commercial use only).

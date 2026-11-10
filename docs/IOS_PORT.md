@@ -8,7 +8,7 @@ choices are researched candidates to verify first.
 - Runs fully offline on an **iPhone 15 Pro** (A17 Pro, 8 GB RAM), models bundled in the app,
   works out of the box.
 - **Best quality** model tier: Whisper large-v3-turbo for speech recognition (Hungarian is weak
-  on smaller Whisper models) + NLLB-200 for translation.
+  on smaller Whisper models).
 - Same features as the desktop app: FR ⇄ HU auto mode, "any → HU / FR" modes, live partial
   preview, speaker diarization with rename / merge, ⚠ unsure marker.
 - UI: follow `desktop/ui/index.html` (run `desktop/ui_demo.py` to see it with sample data).
@@ -27,12 +27,12 @@ but would run the models slower on the phone.
 |---|---|---|---|
 | Audio + VAD | sounddevice + Silero VAD | AVAudioEngine (16 kHz mono) + Silero VAD ONNX (onnxruntime) or WhisperKit's VAD | same 0.6 s end-of-utterance behaviour |
 | Speech recognition | whisper-large-v3-turbo (transformers, fp16) | **WhisperKit** (Core ML, runs on the Neural Engine) with large-v3-turbo | latency per utterance, language-probability access for the "speaker's usual language" fix, no-speech prob, avg log-prob |
-| Translation | NLLB-200-distilled-1.3B fp16 | NLLB-200-distilled-**600M**, int8 (ONNX Runtime, as in the RTranslator Android app) or a Core ML conversion | quality vs 1.3B on FR⇄HU, RAM (~1.3 GB reported for 600M), SentencePiece tokenizer in Swift |
-| Speaker embeddings | WavLM-base-plus-sv | same model converted to Core ML, or a smaller ONNX speaker model (sherpa-onnx ships some) | re-calibrate the 0.80 threshold if the model changes |
+| Translation | Opus-MT fr→hu + hu→fr (transformers on GPU); NLLB-1.3B for other languages | **Opus-MT int8** (CTranslate2 or ONNX Runtime; 2 × 76 MB, measured 0.23 GB RAM). NLLB-600M int8 only if the "any language" modes are kept | SentencePiece tokenizer in Swift |
+| Speaker embeddings | CAM++ ONNX via sherpa-onnx | **same ONNX file** with sherpa-onnx's iOS build | threshold 0.70 should carry over (same model) |
 | Text rules | `desktop/textfix.py` | port 1:1 to Swift | run the same cases as `desktop/tests/test_text.py` |
 
-Memory budget to check early: Whisper turbo (~1.6 GB fp16) + NLLB-600M int8 (~0.6–1.3 GB) +
-runtime overhead must fit iOS's per-app limit; the `com.apple.developer.kernel.increased-memory-limit`
+Memory budget to check early: Whisper turbo (compressed Core ML, ~0.6–1 GB) + Opus-MT int8 (0.23 GB) +
+CAM++ (< 0.1 GB) + runtime overhead must fit iOS's per-app limit; the `com.apple.developer.kernel.increased-memory-limit`
 entitlement may be needed, and may require a paid developer account.
 
 Model files are ~2 GB: keep them **out of git**. Add a script that downloads / converts them into the
@@ -50,6 +50,6 @@ Xcode project's resources folder (gitignored), and document it.
 1. Verify the desktop app on the Mac (`desktop/setup.sh`, `desktop/run.sh`, MPS backend).
 2. Spike: WhisperKit turbo on the iPhone, measure latency and memory on recorded FR and HU audio
    (desktop session logs give real test clips: `utterances.jsonl` + wav files).
-3. Spike: NLLB-600M int8 on the iPhone, compare translations with the desktop 1.3B on the same sentences.
+3. Spike: Opus-MT int8 on the iPhone, compare with the desktop output on the same sentences.
 4. Pipeline in Swift (VAD → ASR → MT → diarization) with the parameters in ARCHITECTURE.md.
 5. SwiftUI screens matching `desktop/ui/index.html`.
