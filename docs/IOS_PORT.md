@@ -14,6 +14,10 @@ choices are researched candidates to verify first.
 - UI: follow `desktop/ui/index.html` (run `desktop/ui_demo.py` to see it with sample data).
   It was designed at the iPhone 15 Pro viewport (393 × 852 pt).
 
+**Read [LOW_MEMORY.md](LOW_MEMORY.md) first**: measured memory, speed and accuracy of smaller
+model combinations. Key results: Hungarian needs Whisper turbo; Opus-MT fr↔hu (0.23 GB) translates
+as well as NLLB-600M (0.7 GB); turbo on CPU is too slow, so it must run on the Neural Engine.
+
 ## Recommended stack (not yet confirmed by the owner)
 
 Native **Swift / SwiftUI**, iOS 17+. Flutter was considered (one codebase with a Windows build)

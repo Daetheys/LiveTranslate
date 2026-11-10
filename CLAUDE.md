@@ -22,7 +22,8 @@ desktop/
   ui_demo.py       opens the UI with sample data, no models: use it for UI work
   convert_nllb.py  one-time NLLB → fp16 safetensors conversion (lower RAM at load)
   setup.ps1 / run.ps1 / run.cmd   Windows      setup.sh / run.sh   macOS / Linux
-docs/              architecture and iOS plan
+docs/              architecture, iOS plan, low-memory measurements (LOW_MEMORY.md)
+tools/lowmem/      CPU int8 benchmark scripts behind LOW_MEMORY.md
 ```
 
 ## Commands
